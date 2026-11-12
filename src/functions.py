@@ -67,3 +67,114 @@ def answer_question(question, collection, k=5):
 def evaluate(questions, answer_fn):
     """Run the evaluation set and return one row per question: hit, cites, refused, cost."""
     pass
+
+
+
+
+
+
+import pandas as pd
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+
+def load_matching_model():
+    """Load our pretrained semantic matching model."""
+    return SentenceTransformer(MODEL_NAME)
+
+
+def match_jobs(candidate_text, jobs, model, top_n=5):
+    """
+    Match candidate experience against job descriptions.
+
+    Returns the top N jobs ranked by semantic similarity.
+    """
+
+    # Combine title and description
+    job_texts = (
+        jobs["title"].fillna("") + " " +
+        jobs["description"].fillna("")
+    ).tolist()
+
+    # Convert candidate and jobs into embeddings
+    candidate_embedding = model.encode([candidate_text])
+
+    job_embeddings = model.encode(
+        job_texts,
+        show_progress_bar=False
+    )
+
+    # Calculate cosine similarity
+    scores = cosine_similarity(
+        candidate_embedding,
+        job_embeddings
+    ).flatten()
+
+    # Add scores to a copy of the DataFrame
+    results = jobs.copy()
+    results["match_score"] = scores
+
+    # Return the highest-ranked jobs
+    return results.sort_values(
+        "match_score",
+        ascending=False
+    ).head(top_n)
+
+
+import pymupdf
+
+
+def extract_text_from_pdf(uploaded_file):
+    """Extract text from a PDF uploaded in Streamlit."""
+
+    pdf_bytes = uploaded_file.getvalue()
+
+    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
+        text = "\n".join(
+            page.get_text() for page in doc
+        )
+
+    return text.strip()
+
+
+def filter_jobs(jobs, location, arrangement):
+    """Filter jobs by location and work arrangement."""
+
+    filtered = jobs.copy()
+
+    # Filter by location
+    if location.strip():
+        filtered = filtered[
+            filtered["location"].fillna("").str.contains(
+                location.strip(),
+                case=False,
+                regex=False
+            )
+        ]
+
+    # Detect work arrangement from job descriptions
+    if arrangement != "Any":
+
+        job_text = (
+            filtered["title"].fillna("") + " " +
+            filtered["description"].fillna("")
+        )
+
+        remote_pattern = r"\bremote\b|homeoffice|home.office|work from home"
+        hybrid_pattern = r"\bhybrid\b|hybridarbeit|mobiles arbeiten"
+
+        remote = job_text.str.contains(remote_pattern, case=False, regex=True)
+        hybrid = job_text.str.contains(hybrid_pattern, case=False, regex=True)
+
+        if arrangement == "Remote":
+            filtered = filtered[remote & ~hybrid]
+        elif arrangement == "Hybrid":
+            filtered = filtered[hybrid]
+        elif arrangement == "On-site":
+            filtered = filtered[~remote & ~hybrid]
+
+    return filtered
+

@@ -1,0 +1,16 @@
+profile_id,model,precision_at_5,ndcg_at_5
+backend_developer,tfidf_score,0.2,0.8622240278900383
+cloud_engineer,tfidf_score,0.4,0.7637012590219476
+data_analyst,tfidf_score,0.2,0.8085523919828193
+ml_engineer,tfidf_score,0.4,0.803125922210108
+technical_support,tfidf_score,0.0,0.13777597210996173
+backend_developer,semantic_score,0.4,0.9155230494702449
+cloud_engineer,semantic_score,0.6,0.915210949803576
+data_analyst,semantic_score,0.2,0.7578355960204242
+ml_engineer,semantic_score,0.6,0.7429448126991383
+technical_support,semantic_score,0.4,0.57541711438138
+backend_developer,zero_shot_score,0.0,0.10918487464734664
+cloud_engineer,zero_shot_score,0.4,0.6421755823489528
+data_analyst,zero_shot_score,0.0,0.12663167705327652
+ml_engineer,zero_shot_score,0.0,0.08478905019642406
+technical_support,zero_shot_score,0.0,0.24696084675730837

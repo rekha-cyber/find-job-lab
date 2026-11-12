@@ -1,47 +1,165 @@
-"""The app you demo on Friday. Run it from the repo root:
-
-    streamlit run app/streamlit_app.py
-
-This is a skeleton: replace every TODO with your own product. Day 3 of Week 8
-(Streamlit, from notebook to app) shows each piece.
-"""
 
 import sys
+from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
-sys.path.append(".")                       # so `src` is importable when you run from the repo root
-from src.functions import *                # noqa: E402,F401  the same functions as your notebooks
-
-st.set_page_config(page_title="TODO: your product's name", page_icon="🛍️")
-st.title("TODO: your product's name")
-st.caption("TODO: one sentence for the user: what it does, and on what data.")
 
 
+from src.functions import (
+    load_matching_model,
+    match_jobs,
+    extract_text_from_pdf,
+    filter_jobs
+)
+
+# Make the project root accessible for imports
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from src.functions import load_matching_model, match_jobs
+
+
+# Page configuration
+st.set_page_config(
+    page_title="JobMatch AI",
+    page_icon="💼",
+    layout="wide"
+)
+
+st.title("💼 JobMatch AI")
+st.write("Find jobs that match your skills and experience.")
+
+
+# Load model only once
 @st.cache_resource
-def load_core():
-    """Load the saved model, or build the pipeline, ONCE per session (not on every rerun).
-
-    Model track: return joblib.load(MODELS / "your_model.joblib")
-    LLM track:   return the Chroma collection and anything else the pipeline needs.
-                 Read the key with st.secrets["OPENAI_API_KEY"] or from .env, never from the code.
-    """
-    return None
+def get_model():
+    return load_matching_model()
 
 
-core = load_core()
+# Load saved job listings
+@st.cache_data
+def get_jobs():
+    return pd.read_csv(ROOT / "data/raw/jobs.csv")
 
-text = st.text_area("TODO: what the user types", placeholder="TODO: an example input")
 
-if st.button("TODO: the action"):
-    if not text.strip():
-        st.warning("Please write something first.")
+# User input
+st.subheader("Your experience")
+
+
+input_method = st.radio(
+    "How would you like to provide your experience?",
+    ["Write a description", "Upload CV (PDF)"]
+)
+
+candidate_text = ""
+
+if input_method == "Write a description":
+
+    candidate_text = st.text_area(
+        "Describe your skills and experience:",
+        height=180,
+        placeholder="I have experience with Python, SQL, machine learning..."
+    )
+
+else:
+
+    uploaded_cv = st.file_uploader(
+        "Upload your CV",
+        type=["pdf"]
+    )
+
+    if uploaded_cv is not None:
+
+        try:
+            candidate_text = extract_text_from_pdf(uploaded_cv)
+
+            if candidate_text:
+                st.success("CV text extracted successfully!")
+
+                with st.expander("Preview extracted CV text"):
+                    st.text(candidate_text[:3000])
+            else:
+                st.warning(
+                    "No text found in the PDF. "
+                    "Please try a text-based PDF."
+                )
+
+        except Exception as e:
+            st.error(f"Could not read PDF: {e}")
+
+top_n = st.slider(
+    "Number of recommendations",
+    min_value=5,
+    max_value=10,
+    value=5
+)
+
+st.subheader("Job preferences")
+
+preferred_location = st.text_input(
+    "Preferred location",
+    value="Frankfurt",
+    placeholder="e.g. Frankfurt, Berlin, Munich"
+)
+
+work_arrangement = st.selectbox(
+    "Work arrangement",
+    ["Any", "Remote", "Hybrid", "On-site"]
+)
+
+# Search button
+if st.button("Find matching jobs", type="primary"):
+
+    if not candidate_text.strip():
+        st.warning("Please describe your experience first.")
+
     else:
-        # TODO: call your functions from src/functions.py, then show the result:
-        # - model track: the prediction and its confidence (st.metric, st.progress, st.bar_chart)
-        # - LLM track: the answer and its sources (st.markdown, st.expander for each source)
-        st.info("TODO: show the result here.")
+        with st.spinner("Finding your best matches..."):
 
-with st.sidebar:
-    st.header("About")
-    st.write("TODO: the data (with its source), the model or pipeline, the evaluation result, and the limits.")
+                model = get_model()
+                jobs = get_jobs()
+
+                filtered_jobs = filter_jobs(
+                    jobs,
+                    preferred_location,
+                    work_arrangement
+                )
+
+                if filtered_jobs.empty:
+                    st.warning(
+                        "No jobs found with these filters. "
+                        "Try a different location or work arrangement."
+                    )
+                    st.stop()
+
+                results = match_jobs(
+                    candidate_text,
+                    filtered_jobs,
+                    model,
+                    top_n=top_n
+                )
+
+        st.success(f"Found {len(results)} matching jobs!")
+
+        for _, job in results.iterrows():
+
+            with st.container(border=True):
+
+                st.subheader(job["title"])
+
+                st.write(f"**Company:** {job['company']}")
+                st.write(f"**Location:** {job['location']}")
+
+                st.write(job["description"])
+
+                st.caption(
+                    f"Semantic similarity: {job['match_score']:.3f}"
+                )
+
+                if pd.notna(job["url"]):
+                    st.link_button(
+                        "View job",
+                        job["url"]
+                    )
