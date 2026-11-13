@@ -38,3 +38,8 @@ chromadb>=1.0
 jupyterlab>=4.0
 ipykernel>=6.0
 pymupdf
+requests
+torch
+sentencepiece
+openpyxl
+ipywidgets

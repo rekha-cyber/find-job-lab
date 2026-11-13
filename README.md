@@ -1,256 +1,205 @@
-![Ironhack logo](https://user-images.githubusercontent.com/23629340/40541063-a07a0a8a-601a-11e8-91b5-2f13e4e6b441.png)
+# JobMatch AI
 
-# Project 3 | AI Product: From Model to Product
+**CV-to-job matching with NLP | Ironhack Data Science & Machine Learning — Final Project 3**
 
-*Data Science & Machine Learning — Week 9, the final project*
+JobMatch AI is a Streamlit prototype that recommends job vacancies based on a candidate's skills and experience. Users can paste an experience summary or upload a text-based PDF CV, choose a location and work-arrangement preference, and review the top 5–10 matches with links to the original vacancies.
 
-Build a small AI product that someone could actually use. You will frame a problem, build either a trained NLP model or an LLM application, evaluate it honestly against a baseline, and put it in the hands of a user through a **Streamlit app** that you demo live.
+> **Scope:** This is a job-*relevance* recommender, not a hiring-probability estimator. Similarity scores do not predict whether an employer will invite or hire a candidate.
 
-`Python` · `NLP` · `Transformers` · `Embeddings` · `LLM APIs` · `RAG` · `Agents` · `Evaluation` · `Streamlit` · `MLOps`
+## Problem and users
+
+**Target users:** Job seekers exploring software engineering, data, AI/ML, cloud, analytics, and technical-support roles.
+
+**Question:** Given a candidate profile and a collection of vacancies, which jobs should the candidate review first?
+
+Traditional keyword search can miss related roles that use different terminology. The project compares lexical, semantic, and zero-shot methods to see whether semantic matching ranks suitable jobs more effectively.
+
+## What the app does
+
+- Accepts a free-text description **or** a PDF CV and extracts text locally with PyMuPDF.
+- Uses a pretrained multilingual Sentence Transformer to rank vacancies by semantic similarity.
+- Allows selection of **5–10 recommendations**.
+- Filters by a preferred location string and by work arrangement (**Any, Remote, Hybrid, On-site**).
+- Shows title, company, location, description excerpt, similarity score, and a link to view the vacancy.
+- Uses a saved CSV snapshot for the demo; it does **not** require an Adzuna API request for each recommendation.
+
+**Current filter limitations:** Location filtering matches text in a saved location field rather than geographic distance. Work arrangement is inferred from keywords in titles/descriptions, so it is not verified; an unmentioned arrangement is *unknown*, not necessarily on-site. Saved jobs may be outdated.
+
+**PDF limitation:** Only text-based PDFs are supported; scanned/image-only PDFs require OCR, which is outside this version's scope.
+
+## Architecture
+
+```text
+Adzuna API → download_data.py → data/raw/jobs.csv
+                                      ↓
+User text / PDF → text extraction → optional filters → multilingual embeddings
+                                                        ↓
+                                             cosine similarity ranking
+                                                        ↓
+                                                Streamlit top 5–10
+```
+
+The Streamlit app is in `app/streamlit_app.py`; reusable extraction, filtering, and ranking functions are in `src/functions.py`.
+
+## Data
+
+**Source:** [Adzuna Jobs API](https://developer.adzuna.com/overview) (German endpoint, Frankfurt-area searches).
+
+- **162 unique job listings** collected from several search keywords, including Python, Data Scientist, Machine Learning, Backend Developer, Data Analyst, Tableau, software engineering, cloud engineering, and technical support.
+- Listings were de-duplicated by **Adzuna job ID**, not by near-identical text.
+- Main fields: `id`, `title`, `company`, `location`, `description`, `url`, `search_keyword`.
+- The original collection showed no missing values in the inspected fields; descriptions were approximately **500 characters**, limiting how much of a job's requirements can be observed.
+- A fixed **28-job evaluation subset** was selected for reproducible comparison of approaches.
+- Five fictional candidate profiles represent ML engineering, backend development, data analysis, cloud engineering, and technical support.
+- Each of the **140 profile–job pairs** was assigned an ordinal relevance label: `0` = not relevant, `1` = partially relevant, `2` = highly relevant. The final labels were **AI-assisted revisions** of an initial manual pass and should not be described as independently verified human ground truth.
+
+**Data-use note:** Check Adzuna's current API/redistribution terms before committing or publishing downloaded job descriptions. The original Ironhack template ignores `data/raw/` and instructs students not to commit downloaded source data. If you cannot redistribute the data, keep it local and explain that fresh users need API credentials and must regenerate their own snapshot (which may not reproduce the historical evaluation set).
+
+## Three approaches compared
+
+| Approach | Mechanism | Role in project |
+|---|---|---|
+| **TF-IDF + cosine similarity** | Lexical token weighting and similarity | Baseline |
+| **Multilingual Sentence Transformers + cosine similarity** | Pretrained sentence embeddings encode candidate and vacancy text | Selected app approach |
+| **Multilingual zero-shot NLI classifier** | Scores the candidate–job pair against strong, partial, and poor match hypotheses | Third experiment |
+
+**Embedding model:** `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`.
+
+**Zero-shot model:** `MoritzLaurer/mDeBERTa-v3-base-mnli-xnli`. Its three hypothesis scores were reduced to a ranking score using weights `1.0` (strong), `0.5` (partial), and `0.0` (poor). This is a heuristic ranking score, **not a calibrated probability**.
+
+These experiments compare *pretrained retrieval and classification approaches*. They do not train a supervised classifier on the 140 labels. Clarify with the instructor whether this interpretation satisfies the **model track** requirement for a trained model.
+
+## Evaluation design
+
+All approaches were ranked on the **same 28 fixed jobs × 5 profiles**. Relevance was assessed at the candidate–job-pair level rather than inferred from search keywords.
+
+- **Precision@5:** Fraction of the first five results with relevance label `2` (highly relevant).
+- **nDCG@5:** Measures ranking quality using graded relevance labels `0`, `1`, and `2`.
+- Reported aggregates are **means across five profiles**; nDCG standard deviation reflects variation across those profiles, not statistical uncertainty over a representative population.
+
+### Results
+
+| Model | Mean Precision@5 | Mean nDCG@5 | SD of nDCG@5 |
+|---|---:|---:|---:|
+| **Sentence Transformers** | **0.44** | **0.781** | **0.142** |
+| TF-IDF | 0.24 | 0.675 | 0.302 |
+| Zero-shot NLI | 0.08 | 0.242 | 0.232 |
+
+Sentence Transformers had the highest measured performance on this small curated evaluation set and was chosen for the application. Compared with TF-IDF, mean Precision@5 increased by **0.20 absolute** and nDCG@5 by **0.106 absolute**.
+
+**Cost/performance:** The zero-shot model took **2,156.71 seconds (~35 min 57 sec)** on CPU to score 140 pairs (about **15.4 seconds/pair** in that run), excluding any earlier model download. TF-IDF and Sentence Transformer timing should be measured and reported separately for a complete apples-to-apples runtime comparison; pretrained-model loading, corpus embedding, and per-query inference are different operations. Model artifact sizes have **not yet been measured**.
+
+### Error analysis
+
+Sentence Transformers returned **seven label-0 jobs in the combined top-five rankings** (25 recommendations across five profiles). Examples include:
+
+- A technical-support listing ranked for a backend developer.
+- A .NET software-engineering role ranked for a cloud engineer.
+- A junior data-analyst role ranked for an ML engineer.
+- An upskilling/training advertisement ranked as a job vacancy.
+
+Likely failure modes include occupational overlap without role fit, misleading/truncated descriptions, and the absence of explicit checks for vacancy type, seniority, and required skills. The 28-job evaluation set can contain duplicate-like ads, and its curated composition is not representative of all vacancies.
+
+**Evaluation limitation:** The same fixed subset was used during exploration and final comparison, and AI-assisted labels were reviewed after earlier model results were known. Therefore the reported scores are **exploratory validation results, not an untouched held-out test score**. This is a gap against the stricter Ironhack model-track rubric; a truly independent test set and predeclared labeling rules would be needed before claiming rigorous generalization.
+
+## Repository structure
+
+```text
+.
+├── README.md
+├── RUBRIC.md
+├── requirements.txt
+├── download_data.py
+├── .env.example
+├── app/
+│   └── streamlit_app.py
+├── src/
+│   └── functions.py
+├── notebooks/
+│   ├── 01_framing_and_baseline.ipynb
+│   ├── 02_build.ipynb
+│   └── 03_evaluate.ipynb
+├── data/
+│   ├── raw/                       # Local Adzuna snapshot, if permitted
+│   ├── candidate_profiles.json
+│   ├── evaluation_jobs.csv
+│   ├── relevance_labels_reviewed.csv
+│   ├── zero_shot_scores.csv
+│   └── results/
+└── models/                      # Optional cached/saved artifacts
+```
+
+Some data or result files may be local-only depending on `.gitignore` and redistribution permissions. Confirm file names and availability before submission.
+
+## Run locally
+
+**Requirements:** Python 3.11 recommended, Git, internet connection for the initial Hugging Face model download. CPU is sufficient for the Streamlit semantic-matching app; full zero-shot evaluation is substantially slower.
+
+On Windows PowerShell, from a fresh clone:
+
+```powershell
+git clone https://github.com/YOUR_USERNAME/jobmatch-ai.git
+cd jobmatch-ai
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+**Data setup:** The app currently reads `data/raw/jobs.csv`. If the file is not included in the clone, create a `.env` file (never commit it):
+
+```dotenv
+ADZUNA_APP_ID=your_app_id
+ADZUNA_APP_KEY=your_app_key
+```
+
+Then run:
+
+```powershell
+python download_data.py
+```
+
+Adzuna calls may be rate-limited or billable under your plan. This command retrieves *current* jobs and will not reconstruct the exact 162-job historical snapshot. To reproduce the reported evaluation metrics exactly, you need the original fixed evaluation data and saved score artifacts, subject to sharing rights.
+
+Launch the app:
+
+```powershell
+python -m streamlit run app/streamlit_app.py
+```
+
+For the notebooks:
+
+```powershell
+python -m jupyter lab
+```
+
+Run notebooks in order: `01_framing_and_baseline.ipynb`, `02_build.ipynb`, `03_evaluate.ipynb`. Reusing the saved `zero_shot_scores.csv` avoids repeating the long inference run. Notebook 03 should report its conclusions and limitations independently.
+
+## Reproducibility and safety
+
+- Keep `.env`, `.venv/`, cached model weights, and user-uploaded CVs out of Git.
+- The app extracts PDF text in memory; it does not intentionally persist the uploaded CV to disk.
+- Model downloads and live Adzuna search require network access; scoring saved jobs does not require Adzuna calls.
+- Fix and record package versions, model revisions, and dataset snapshots for stronger reproducibility.
+- Before submitting, verify a fresh clone starts the Streamlit app and reproduces the notebook results when the required local data is supplied.
+- Treat recommendations as browsing assistance; applicants should verify actual requirements, location, work arrangement, and vacancy status at the original listing.
+
+## Future improvements
+
+- Add explicit vacancy-type, seniority, and required-skill filters; exclude training advertisements.
+- Replace location-string matching with geographic-distance filtering and structured remote/hybrid metadata.
+- Detect near-duplicate ads and diversify recommendations.
+- Evaluate on a larger, independently labeled and held-out test set, with additional real candidate profiles where consent permits.
+- Explore occupation taxonomies (e.g., ESCO) and aggregated career-transition data without inferring hiring probabilities.
+- Cache job embeddings and add live Adzuna refresh with call-budget controls.
+
+## Presentation
+
+Ironhack's suggested format is **7 minutes of slides + 3 minutes of live Streamlit demo**. Add a link to the final slides here when they are created.
 
 ---
 
-## Overview
+*Educational prototype for Ironhack Project 3. Not a production recruitment decision system.*
 
-This is the last project of the bootcamp, and the most open one. Weeks 7 and 8 gave you two ways to build with language: **train a model** (TF-IDF, embeddings, a fine-tuned transformer) or **build on an LLM** (prompts, RAG, tools). Project 3 asks you to pick one, take it all the way to a working app, and prove that it works.
 
-- **Format** — in pairs or on your own. Working in a pair, divide the work by stage (data, core, evaluation, app), not by person-per-notebook, and run each other's code every day.
-- **Duration** — launch on Friday of Week 8, 4 working days, presentations on Friday of Week 9.
-- **Tools** — Python, pandas, scikit-learn, sentence-transformers, Hugging Face `transformers`, the OpenAI API, LangChain (optional), Chroma, MLflow (optional), Streamlit, GitHub.
-- **Repository** — click **Use this template** at the top of this page to create your own repo.
-
-### The goal
-
-Answer one question for one kind of user, with an AI component they can use: *Is this review a complaint? What do customers say about the battery? Which of my products have a quality problem?* By Friday you should be able to say what your product does, for whom, how well it works compared with a simple alternative, what it costs to run, and where it should not be trusted.
-
-> [!IMPORTANT]
-> Choose your track, your data and your user on launch day, and stick with them. By Wednesday your evaluation is built around them; switching costs four days of work in two.
-
-<br>
-
-## Choose your track
-
-Every project has **one AI core** and **one app**. You choose the core:
-
-| | **Model track** | **LLM track** |
-|---|---|---|
-| **The core** | A model you train and evaluate: a text classifier, a rating predictor, a topic or aspect model | An LLM application: RAG over documents, an agent with tools, structured extraction at scale |
-| **From the course** | Week 7: TF-IDF, embeddings, fine-tuning; Week 5: pipelines, validation | Week 7: the OpenAI API, RAG; Week 8: agents and tools |
-| **The baseline** | A dummy model, then TF-IDF with a linear model | The LLM alone (no retrieval, no tools), or a keyword search |
-| **The evaluation** | A held-out test set, used once; the right metric for the decision | An evaluation set of at least 15 questions, written **before** you build, with the expected answer or source |
-| **Also report** | Training time and model size | The cost and the time per question |
-| **The app** | Loads the saved model and predicts for new text | Calls your pipeline and shows the answer with its sources |
-
-You may do both (for example, a sentiment model whose predictions feed an LLM summary), but one done well beats two done halfway. **The app is mandatory on both tracks.**
-
-<br>
-
-## Choose your data
-
-The default dataset is **Amazon Reviews 2023**: real product reviews with a star rating, a title, the text and the product's description, from a research dataset published by the McAuley Lab at UC San Diego. Read [`data/README.md`](data/README.md) for the fields, the categories, the traps to watch for, and how to cite it.
-
-```bash
-python download_data.py                                  # Amazon reviews, Health_and_Personal_Care (the default), 345 MB
-python download_data.py amazon --category Gift_Cards     # another category, listed in data/README.md
-python download_data.py clothing                         # option 2: women's clothing reviews, public domain
-```
-
-The Amazon data has no stated licence: it is published for research, and you must cite it (the reference is in the data guide) and never commit it. The second option, **23,000 women's clothing reviews** released into the public domain, is smaller and licence-clear.
-
-Files land in `data/raw/`, which is gitignored. **Do not commit data.** Anyone cloning your repo runs the same script.
-
-Some project ideas on this data:
-
-- **Model track:** classify reviews as negative, neutral or positive from the text alone, and route the negative ones to a support team; predict the star rating; detect which aspect a complaint is about (quality, delivery, price, side effects).
-- **LLM track:** *Ask the reviews*, a RAG assistant that answers questions about a product from its reviews and cites them; a product-comparison agent with a retrieval tool and a calculator; an extractor that turns thousands of reviews into a table of complaints, then summarises it.
-
-> [!NOTE]
-> **Bringing your own data or topic?** You may, and you are graded on exactly the same rubric. You need a clear user and question, enough data for an honest evaluation (a few thousand labelled texts for the model track; a document collection and 15 test questions for the LLM track), and a licence that permits educational use. **No personal data** you are not allowed to process, and no confidential documents sent to an API. Clear it with your teacher on launch day, not on Wednesday.
-
-<br>
-
-## Day-by-day breakdown
-
-Launch day (Friday of Week 8) is when you settle who you are working with, choose your track, data and user, create your repo, download the data and write your framing — so Monday starts with the data in front of you.
-
-### Day 1 — Data and baseline
-
-- Finish **`01_framing_and_baseline.ipynb`**: what one row (or one document) is, data quality, and the distribution of what you predict or the kinds of questions you answer.
-- **Model track:** clean the text, define the target, **split once** (a fixed `random_state`, stratified), and score a dummy model and a TF-IDF baseline with cross-validation.
-- **LLM track:** prepare the documents (cleaning, chunking, metadata), write your **evaluation set** of at least 15 questions with the expected source of each answer, and score the baseline: the LLM alone, or a keyword search.
-
-> [!TIP]
-> By the end of today you should be able to say your metric and your baseline score out loud. If you cannot, you are behind.
-
-### Day 2 — Build the core
-
-Today is the core engineering day, and the one the week turns on.
-
-- **Model track:** compare **at least three approaches** on the same validation folds or the same validation set — for example TF-IDF with a linear model, sentence embeddings with a classifier, and a fine-tuned DistilBERT or a zero-shot model — in **`02_build.ipynb`**. Track the runs with MLflow if you can.
-- **LLM track:** build the full pipeline end to end — retrieval with metadata, a grounded prompt that cites its sources and says "I don't know", or an agent with its tools — and run it on a few questions from your evaluation set.
-
-> [!IMPORTANT]
-> **Anyone without an end-to-end result on Tuesday evening has no Wednesday.** Everything after this builds on it.
-
-### Day 3 — Evaluate and improve
-
-- **Model track:** tune the best approach, choose the final one, **evaluate it once on the test set**, analyse the errors (confusion matrix, per-class results, examples of mistakes), and **save** it.
-- **LLM track:** run the **whole evaluation set**: retrieval hit rate, whether answers cite the right sources, whether out-of-scope questions are refused, the cost per question. Make **one improvement** (chunk size, a filter, a better prompt, a stronger embedding model) and measure it on the same set.
-- Write the results in **`03_evaluate.ipynb`**, your report.
-
-### Day 4 — The app and the story
-
-- Build the **Streamlit app** in `app/streamlit_app.py`: it loads your saved model (or builds your pipeline) once with `st.cache_resource`, takes the user's input, and shows the result. Keys go in `.streamlit/secrets.toml` or `.env`, **never in the code**.
-- Check that someone else can run it from a fresh clone by following your README.
-- Write your README, build your slides, and **rehearse once, timed**.
-- *Optional:* deploy the app on Streamlit Community Cloud.
-
-> [!NOTE]
-> **Notebook 03 is your report.** It is read on its own, by someone who has not seen notebooks 01 and 02: the question, the evidence, what you concluded and how far to trust it.
-
-<br>
-
-## Deliverables
-
-Your main deliverable is your GitHub repo, created from this template, containing:
-
-| Item | Description |
-|---|---|
-| `README.md` | Your project: the user and the question, the track, the data and its source, the baseline and the final result, the cost, the limitations, and **how to run the app**. Replace this brief with your own. |
-| `notebooks/01_framing_and_baseline.ipynb` | Framing, data, the split or the evaluation set, and the baseline. |
-| `notebooks/02_build.ipynb` | The approaches compared (model track) or the pipeline built (LLM track). |
-| `notebooks/03_evaluate.ipynb` | **The report.** The final evaluation, the error or failure analysis, the cost, and the limitations. |
-| `app/streamlit_app.py` | The app you demo. |
-| `src/functions.py` | Reusable functions, imported by the notebooks and the app. |
-| `requirements.txt` | Everything needed to run the notebooks and the app. |
-| Slides | Linked or committed in your README, so they can be read after the presentation. Any tool. |
-
-Saved models in `models/`, your `.env` file and `.streamlit/secrets.toml` are gitignored. The README says how to recreate the model and where to put the keys.
-
-### Minimum requirements
-
-Your project must meet all of these to pass:
-
-- **Framing** — a stated user, the question or decision your product supports, and a metric chosen for that decision.
-- **Baseline** — a simple alternative scored with the same evaluation as your final solution.
-- **Honest evaluation** — *model track:* at least 3 approaches compared on the same validation, and the final model evaluated once on a held-out test set; *LLM track:* an evaluation set of at least 15 questions written before building, with retrieval or tool use checked, citations checked, and out-of-scope questions tested.
-- **Failure analysis** — where and why it goes wrong, with examples.
-- **Cost** — *LLM track:* the cost per question; *model track:* the training time and the size of the model.
-- **A working app** — runs from a fresh clone by following the README, and uses your saved model or your pipeline.
-- **No secrets in git** — no API key anywhere in the history.
-
-The full grading rubric is in [`RUBRIC.md`](RUBRIC.md). Read it on launch day — it tells you exactly what is being evaluated.
-
-<br>
-
-## Advanced features (optional)
-
-Not required, but they will strengthen your project:
-
-- **Experiment tracking** — every run in MLflow, the final model registered and loaded by alias in the app.
-- **Both tracks** — a trained classifier that filters or routes reviews, and an LLM that summarises or answers from them.
-- **An LLM as a judge** — a second model that grades each answer against the expected one, checked by hand on a sample.
-- **Deployment** — the app live on Streamlit Community Cloud, with its keys in the platform's secrets.
-- **Monitoring** — a page in the app that shows the distribution of predictions or questions, and flags drift.
-- **Multimodal** — a photo or a voice question as input, with the cost measured.
-
-<br>
-
-## Coding best practices
-
-- **Modularise.** Logic in `src/functions.py`, imported by both the notebooks and the app. The notebook is for the narrative.
-- **One seed.** Define `RANDOM_STATE` once and pass it everywhere, so a second run gives the same numbers.
-- **One model name.** Define the LLM and the embedding model once; log the tokens of every call.
-- **Keys out of code.** `.env` locally, `st.secrets` in the app, both gitignored. Check `git status` before every commit.
-- **Restart and run all.** Before you commit a notebook, run it top to bottom on a fresh kernel.
-- **Commit often.** Small, frequent commits with descriptive messages.
-
-<br>
-
-## Presentation guidelines
-
-| Component | Duration |
-|---|---|
-| Talking with slides | 7 minutes |
-| Live demo of the app | 3 minutes |
-| **Total** | **10 minutes** |
-
-> [!IMPORTANT]
-> **You present from your own machine by sharing your screen.** The demo is your Streamlit app, running, on an example the audience can follow. Have it open and ready before your slot, with a second example in case the first one surprises you.
-
-### Suggested slide structure (~10 slides)
-
-1. **Title** — project title and your name or names.
-2. **The user and the problem** — who uses it, and what they decide with it.
-3. **The data** — source, what one row or document is, the traps you found.
-4. **The metric and the baseline** — why this metric, and the score to beat.
-5. **What you built** — the approaches compared, or the pipeline, in one diagram.
-6. **The result** — the final evaluation against the baseline.
-7. **Where it goes wrong** — the failure analysis, with examples.
-8. **Cost and limits** — what it costs to run, and where it should not be trusted.
-9. **Conclusions and next steps** — would you ship it, and what would you do next?
-10. **Closing** — project title, your name or names, thank you.
-
-<br>
-
-## Repo layout
-
-The notebooks are laid out in sections with the intent of each one written down, for both tracks, and `src/functions.py` and the app hold a few stubs that exist only to show the shape. **This is a place to start, not a template to fill in** — rename things, add sections, delete the ones for the other track. You are graded on the work, not on how closely you followed the scaffold.
-
-```
-.
-├── README.md                          this brief — replace it with your own
-├── RUBRIC.md                          how you are graded
-├── requirements.txt
-├── download_data.py                   fetches the reviews into data/raw/
-├── .env.example                       the keys you need, without their values
-├── data/
-│   ├── raw/                           downloaded data, gitignored
-│   └── README.md                      the dataset, its fields, its traps, how to cite it
-├── models/                            saved models and indexes, gitignored
-├── notebooks/
-│   ├── 01_framing_and_baseline.ipynb  frame, look, split or evaluation set, baseline
-│   ├── 02_build.ipynb                 compare approaches, or build the pipeline
-│   └── 03_evaluate.ipynb              evaluate, analyse failures, cost — the report
-├── app/
-│   └── streamlit_app.py               the app you demo
-└── src/
-    └── functions.py                   your reusable logic
-```
-
-## Getting set up
-
-```bash
-# 1. Click "Use this template" above, then clone YOUR new repo
-git clone https://github.com/<your-username>/<your-repo>.git
-cd <your-repo>
-
-# 2. Install what you need (read the note at the top of requirements.txt first)
-pip install -r requirements.txt
-
-# 3. LLM track: copy .env.example to .env and add your keys (never commit .env)
-cp .env.example .env
-
-# 4. Download the data
-python download_data.py
-
-# 5. Open the first notebook, and later run the app
-jupyter lab notebooks/01_framing_and_baseline.ipynb
-streamlit run app/streamlit_app.py
-```
-
-<br>
-
-## Tips for success
-
-1. **Choose your track, data and user on launch day.** Switching mid-week costs you time you do not have.
-2. **Write the evaluation before you build.** A test set or an evaluation set decided on Monday keeps you honest on Thursday.
-3. **Beat the baseline before you beat anyone else.** A fine-tuned transformer that does not beat TF-IDF, or a RAG system that does not beat the LLM alone, is a finding — say so.
-4. **Start the app on Wednesday evening**, even if it only shows a title and a text box. Apps always take longer than you think.
-5. **Watch the cost.** Use `gpt-5.4-nano` while you build, and log the tokens of every call.
-6. **Keep keys out of git.** One leaked key and the project stops while it is revoked.
-7. **Ask for help early.** Stuck for more than 30 minutes? Reach out to a classmate, your TA or your teacher.
-8. **Practise the demo out loud** at least once before Friday. Time yourselves.
-9. **Read [`RUBRIC.md`](RUBRIC.md).** It tells you exactly what is being evaluated.
-
-Good luck. Build something you would trust someone else to use.
+## How to run streamlit:
+python -m streamlit run app/job_search.py 

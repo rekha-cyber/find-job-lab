@@ -18,15 +18,7 @@ from src.functions import (
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.functions import load_matching_model, match_jobs
 
-
-# Page configuration
-st.set_page_config(
-    page_title="JobMatch AI",
-    page_icon="💼",
-    layout="wide"
-)
 
 st.title("💼 JobMatch AI")
 st.write("Find jobs that match your skills and experience.")
